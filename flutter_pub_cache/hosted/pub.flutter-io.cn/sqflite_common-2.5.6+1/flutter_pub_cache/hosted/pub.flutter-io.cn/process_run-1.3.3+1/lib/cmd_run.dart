@@ -1,0 +1,95 @@
+/// Prefer using shell
+library;
+
+///
+/// Command runner
+///
+import 'dart:async';
+import 'package:process_run/shell.dart';
+
+import 'package:process_run/src/process_run.dart';
+
+export 'dartbin.dart'
+    show
+        dartChannel,
+        dartVersion,
+        dartExecutable,
+        dartSdkBinDirPath,
+        dartChannelBeta,
+        dartChannelMaster,
+        dartChannelStable,
+        dartChannelDev,
+        isFlutterSupportedSync,
+        isFlutterSupported,
+        dartSdkDirPath,
+        getFlutterBinVersion,
+        getFlutterBinChannel;
+export 'dartbin.dart'
+    show
+        getFlutterBinVersion,
+        getFlutterBinChannel,
+        isFlutterSupported,
+        isFlutterSupportedSync;
+export 'process_run.dart'
+    show
+        // ignore: deprecated_member_use_from_same_package
+        run,
+        executableArgumentsToString,
+        runExecutableArguments,
+        argumentsToString,
+        argumentToString;
+export 'src/build_runner.dart' show PbrCmd;
+export 'src/dartbin_cmd.dart'
+    show
+        DartCmd,
+        PubCmd,
+        PubGlobalRunCmd,
+        PubRunCmd,
+        getDartBinVersion,
+        dartBinFileName,
+        parsePlatformChannel,
+        parsePlatformVersion;
+
+// ignore: deprecated_member_use_from_same_package
+export 'src/dev_cmd_run.dart' show devRunCmd;
+export 'src/flutterbin_cmd.dart' show flutterExecutablePath, FlutterCmd;
+export 'src/process_cmd.dart'
+    show ProcessCmd, processCmdToDebugString, processResultToDebugString;
+export 'src/webdev.dart' show WebDevCmd;
+
+/// Command runner
+///
+
+///
+/// Execute a predefined ProcessCmd command
+/// Avoid and prefer Shell instead
+///
+/// if [commandVerbose] is true, it writes the command line executed preceeded by $ to stdout. It streams
+/// stdout/error if [verbose] is true.
+/// [verbose] implies [commandVerbose]
+///
+Future<ProcessResult> runCmd(
+  ProcessCmd cmd, {
+  ShellOptions? options,
+  bool? verbose,
+  bool? commandVerbose,
+  Stream<List<int>>? stdin,
+  StreamSink<List<int>>? stdout,
+  StreamSink<List<int>>? stderr,
+}) async {
+  options ??= ShellOptions(
+    throwOnError: false,
+    verbose: verbose ?? false,
+    commandVerbose: commandVerbose ?? verbose,
+    stderrEncoding: cmd.stderrEncoding,
+    stdoutEncoding: cmd.stdoutEncoding,
+    workingDirectory: cmd.workingDirectory,
+    stdin: stdin,
+    stdout: stdout,
+    stderr: stderr,
+    environment: cmd.environment,
+    includeParentEnvironment: cmd.includeParentEnvironment,
+    runInShell: cmd.runInShell,
+  );
+  return await processCmdRun(cmd, options: options);
+}

@@ -1,0 +1,189 @@
+// Copyright (c) 2017, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:io';
+
+import 'package:build/build.dart';
+import 'package:build_runner/src/build/asset_content.dart';
+import 'package:build_runner/src/build/build_state/build_state.dart';
+import 'package:build_runner/src/build/build_state/build_step_id.dart';
+import 'package:build_runner/src/build/build_state/build_step_result.dart';
+import 'package:build_runner/src/build/build_state/post_process_build_step_id.dart';
+import 'package:build_runner/src/build/build_state/post_process_build_step_result.dart';
+import 'package:build_runner/src/build_plan/build_package.dart';
+import 'package:build_runner/src/build_plan/build_packages.dart';
+import 'package:build_runner/src/build_plan/build_phases.dart';
+import 'package:build_runner/src/build_plan/build_step_plan.dart';
+import 'package:build_runner/src/build_plan/phase.dart';
+import 'package:build_runner/src/commands/serve/server.dart';
+import 'package:build_runner/src/io/build_output_reader.dart';
+import 'package:shelf/shelf.dart';
+import 'package:test/test.dart';
+
+import '../../common/common.dart';
+
+void main() {
+  late AssetHandler handler;
+  late InternalTestReaderWriter readerWriter;
+  late BuildState buildState;
+  late BuildStepPlan buildStepPlan;
+  late BuildPackages buildPackages;
+
+  setUp(() async {
+    readerWriter = InternalTestReaderWriter();
+    buildStepPlan = BuildStepPlan(
+      (BuildStepPlanBuilder b) =>
+          b..buildPhases = BuildPhases(const <InBuildPhase>[]),
+    );
+    buildState = BuildState(buildStepPlan: buildStepPlan, sources: const {});
+    buildPackages = BuildPackages.singlePackageBuild('a', [
+      BuildPackage.forTesting(name: 'a', isOutput: true),
+    ]);
+    handler = AssetHandler(
+      () async => BuildOutputReader(
+        buildPackages: buildPackages,
+        readerWriter: readerWriter,
+        buildState: buildState.toFinishedBuildState(),
+      ),
+      'a',
+    );
+  });
+
+  void addAsset(String id, String content, {bool deleted = false}) {
+    final parsedId = AssetId.parse(id);
+    if (deleted) {
+      buildState.addPostProcessBuildStepResult(
+        step: PostProcessBuildStepId(input: parsedId, actionNumber: 1),
+        result: PostProcessBuildStepResult(
+          inArtifactTree: true,
+          deletedPrimaryInput: true,
+        ),
+      );
+    }
+    buildState.addSourceForTest(
+      parsedId,
+      content: AssetContent.string(
+        content,
+        digest: computeDigest(parsedId, content),
+      ),
+    );
+    readerWriter.testing.writeString(parsedId, content);
+  }
+
+  test('can not read deleted files', () async {
+    addAsset('a|web/index.html', 'content', deleted: true);
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/index.html')),
+      rootDir: 'web',
+    );
+    expect(response.statusCode, 404);
+    expect(await response.readAsString(), 'Not Found');
+  });
+
+  test('can read from the root package', () async {
+    addAsset('a|web/index.html', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/index.html')),
+      rootDir: 'web',
+    );
+    expect(await response.readAsString(), 'content');
+  });
+
+  test('can read from dependencies', () async {
+    addAsset('b|lib/b.dart', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/packages/b/b.dart')),
+      rootDir: 'web',
+    );
+    expect(await response.readAsString(), 'content');
+  });
+
+  test('properly sets charset for dart content', () async {
+    addAsset('b|lib/b.dart', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/packages/b/b.dart')),
+      rootDir: 'web',
+    );
+    expect(response.headers['content-type'], contains('charset=utf-8'));
+  });
+
+  test('can read from dependencies nested under top-level dir', () async {
+    addAsset('b|lib/b.dart', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/packages/b/b.dart')),
+      rootDir: 'web',
+    );
+    expect(await response.readAsString(), 'content');
+  });
+
+  test('defaults to index.html if path is empty', () async {
+    addAsset('a|web/index.html', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/')),
+      rootDir: 'web',
+    );
+    expect(await response.readAsString(), 'content');
+  });
+
+  test('defaults to index.html if URI ends with slash', () async {
+    addAsset('a|web/sub/index.html', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/sub/')),
+      rootDir: 'web',
+    );
+    expect(await response.readAsString(), 'content');
+  });
+
+  test('does not default to index.html if URI does not end in slash', () async {
+    addAsset('a|web/sub/index.html', 'content');
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/sub')),
+      rootDir: 'web',
+    );
+    expect(response.statusCode, 404);
+  });
+
+  test('Fails request for failed outputs', () async {
+    final primaryId = AssetId('a', 'web/main.dart');
+    final outputId = AssetId('a', 'web/main.ddc.js');
+    final buildStepId = BuildStepId(primaryInput: primaryId, phaseNumber: 0);
+    final buildStepPlan = BuildStepPlan((BuildStepPlanBuilder b) {
+      b.buildPhases = BuildPhases(const <InBuildPhase>[]);
+      b.buildStepsByDeclaredOutput.addAll({outputId: buildStepId});
+    });
+    final buildState = BuildState(
+      buildStepPlan: buildStepPlan,
+      sources: const {},
+    );
+    final stepResult = BuildStepResult((b) {
+      b.result = false;
+      b.inArtifactTree = false;
+    });
+    buildState.addBuildStepResult(step: buildStepId, result: stepResult);
+    handler = AssetHandler(
+      () async => BuildOutputReader(
+        buildPackages: buildPackages,
+        readerWriter: readerWriter,
+        buildState: buildState.toFinishedBuildState(),
+      ),
+      'a',
+    );
+
+    final response = await handler.handle(
+      Request('GET', Uri.parse('http://server.com/main.ddc.js')),
+      rootDir: 'web',
+    );
+    expect(response.statusCode, HttpStatus.internalServerError);
+  });
+
+  test('Supports HEAD requests', () async {
+    addAsset('a|web/index.html', 'content');
+    final response = await handler.handle(
+      Request('HEAD', Uri.parse('http://server.com/index.html')),
+      rootDir: 'web',
+    );
+    expect(response.contentLength, 0);
+    expect(await response.readAsString(), '');
+  });
+}

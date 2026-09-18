@@ -1,0 +1,195 @@
+// Copyright (c) 2020, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:async';
+import 'dart:io';
+
+import 'package:bazel_worker/bazel_worker.dart';
+import 'package:build/build.dart';
+import 'package:path/path.dart' as p;
+
+import 'build_modules/build_modules.dart';
+import 'common.dart';
+import 'errors.dart';
+
+const _jsSourceMapExtension = '.js.map';
+
+/// A builder which can compile the SDK to JS from kernel.
+class SdkJsCompileBuilder implements Builder {
+  /// The SDK kernel file for the current sdk.
+  ///
+  /// This is exactly what will be compiled into the resulting JS file.
+  final String sdkKernelPath;
+
+  /// The root directory of the platform's dart SDK.
+  ///
+  /// If not provided, defaults to the directory of
+  /// [Platform.resolvedExecutable].
+  ///
+  /// On flutter this is the path to the root of the flutter_patched_sdk
+  /// directory, which contains the platform kernel files.
+  final String platformSdk;
+
+  /// The absolute path to the libraries file for the current platform.
+  ///
+  /// If not provided, defaults to "lib/libraries.json" in the sdk directory.
+  final String librariesPath;
+
+  /// The final destination for the compiled JS file.
+  final AssetId jsOutputId;
+
+  /// Enables canary features in DDC.
+  final bool canaryFeatures;
+
+  /// Emits DDC code using its Library Bundle module system.
+  final bool ddcLibraryBundle;
+
+  /// An optional directory path that contains prebuilt sdk files.
+  ///
+  /// If provided, skips compilation and copies the sdk and
+  /// source map files to the output.
+  final String? usePrebuiltSdkFromPath;
+
+  SdkJsCompileBuilder({
+    required this.sdkKernelPath,
+    required String outputPath,
+    String? librariesPath,
+    String? platformSdk,
+    required this.canaryFeatures,
+    required this.ddcLibraryBundle,
+    this.usePrebuiltSdkFromPath,
+  }) : platformSdk = platformSdk ?? sdkDir,
+       librariesPath =
+           librariesPath ??
+           p.join(platformSdk ?? sdkDir, 'lib', 'libraries.json'),
+       buildExtensions = {
+         r'$package$': [
+           outputPath,
+           p.setExtension(outputPath, _jsSourceMapExtension),
+         ],
+       },
+       jsOutputId = AssetId('build_web_compilers', outputPath);
+
+  @override
+  final Map<String, List<String>> buildExtensions;
+
+  @override
+  Future build(BuildStep buildStep) async {
+    if (usePrebuiltSdkFromPath case final String sdkPath) {
+      await _copyPrebuiltSdk(buildStep, sdkPath, jsOutputId);
+    } else {
+      await _createDevCompilerModule(
+        buildStep,
+        jsOutputId,
+        dartSdk: platformSdk,
+        sdkKernelPath: sdkKernelPath,
+        librariesPath: librariesPath,
+        canaryFeatures: canaryFeatures,
+        ddcLibraryBundle: ddcLibraryBundle,
+      );
+    }
+  }
+}
+
+/// Compile the sdk module with the dev compiler.
+Future<void> _createDevCompilerModule(
+  BuildStep buildStep,
+  AssetId jsOutputId, {
+  required String dartSdk,
+  required String sdkKernelPath,
+  required String librariesPath,
+  required bool canaryFeatures,
+  required bool ddcLibraryBundle,
+}) async {
+  final scratchSpace = await buildStep.fetchResource(scratchSpaceResource);
+  final jsOutputFile = scratchSpace.fileFor(jsOutputId);
+
+  ProcessResult result;
+  try {
+    // Use standalone process instead of the worker due to
+    // https://github.com/dart-lang/sdk/issues/49441
+    var snapshotPath = p.join(
+      sdkDir,
+      'bin',
+      'snapshots',
+      'dartdevc_aot.dart.snapshot',
+    );
+    final execSuffix = Platform.isWindows ? '.exe' : '';
+    var dartPath = p.join(sdkDir, 'bin', 'dartaotruntime$execSuffix');
+    if (!File(snapshotPath).existsSync()) {
+      snapshotPath = p.join(
+        sdkDir,
+        'bin',
+        'snapshots',
+        'dartdevc.dart.snapshot',
+      );
+      dartPath = p.join(sdkDir, 'bin', 'dart$execSuffix');
+    }
+    result = await Process.run(dartPath, [
+      snapshotPath,
+      '--multi-root-scheme=org-dartlang-sdk',
+      '--modules=${ddcLibraryBundle ? 'ddc' : 'amd'}',
+      if (canaryFeatures || ddcLibraryBundle) '--canary',
+      '--module-name=dart_sdk',
+      '-o',
+      jsOutputFile.path,
+      p.url.join(dartSdk, sdkKernelPath),
+    ]);
+  } catch (e) {
+    throw DartDevcCompilationException(jsOutputId, e.toString());
+  }
+
+  final message = '${result.stdout}${result.stderr}'
+      .replaceAll('${scratchSpace.tempDir.path}/', '')
+      .replaceAll('org-dartlang-sdk:///', '');
+  if (result.exitCode != EXIT_CODE_OK ||
+      !jsOutputFile.existsSync() ||
+      message.contains('Error:')) {
+    throw DartDevcCompilationException(jsOutputId, message);
+  }
+
+  if (message.isNotEmpty) {
+    log.info('\n$message');
+  }
+
+  // Copy the output back using the buildStep.
+  await scratchSpace.copyOutput(jsOutputId, buildStep);
+
+  await fixAndCopySourceMap(
+    jsOutputId.changeExtension(_jsSourceMapExtension),
+    scratchSpace,
+    buildStep,
+  );
+}
+
+/// Copy the prebuilt SDK to the output.
+Future<void> _copyPrebuiltSdk(
+  BuildStep buildStep,
+  String sdkPath,
+  AssetId jsOutputId,
+) async {
+  final sdkFile = File(p.join(sdkPath, 'dart_sdk.js'));
+  if (!sdkFile.existsSync()) {
+    throw ArgumentError(
+      'Prebuilt SDK file "dart_sdk.js" '
+      'does not exist at $sdkPath',
+    );
+  }
+
+  await buildStep.writeAsBytes(jsOutputId, await sdkFile.readAsBytes());
+
+  final sourceMapFile = File(p.join(sdkPath, 'dart_sdk.js.map'));
+  if (!sourceMapFile.existsSync()) {
+    log.warning(
+      'Prebuilt SDK source map file "dart_sdk.js.map" '
+      'does not exist at $sdkPath',
+    );
+    return;
+  }
+
+  await buildStep.writeAsBytes(
+    jsOutputId.changeExtension(_jsSourceMapExtension),
+    await sourceMapFile.readAsBytes(),
+  );
+}

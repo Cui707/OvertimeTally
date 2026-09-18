@@ -1,0 +1,196 @@
+@TestOn('vm')
+library;
+
+import 'dart:convert';
+
+import 'package:path/path.dart' as p;
+import 'package:process_run/shell.dart';
+import 'package:process_run/src/bin/shell/import.dart';
+import 'package:process_run/src/shell_utils.dart';
+import 'package:process_run/src/shell_utils_common.dart'
+    show isLineToBeContinued;
+import 'package:pub_semver/pub_semver.dart';
+import 'package:test/test.dart';
+
+import 'shell_test_common.dart';
+
+void main() {
+  group('shell_utils', () {
+    test('shellScriptSplitLines', () {
+      expect(shellScriptSplitLines(''), isEmpty);
+      // expect(shellScriptSplitLines('\\'), ['\\']);
+      expect(shellScriptSplitLines(' e\n#\n # comment\nf \n '), [
+        'e',
+        '#',
+        '# comment',
+        'f',
+      ]);
+    });
+
+    test('isLineToBeContinued', () {
+      expect(isLineToBeContinued(''), isFalse);
+      expect(isLineToBeContinued('\\'), isTrue);
+      expect(isLineToBeContinued('^'), isTrue);
+      expect(isLineToBeContinued('\\'), isTrue);
+      expect(isLineToBeContinued('a^'), isFalse);
+      expect(isLineToBeContinued(' ^'), isTrue);
+      expect(isLineToBeContinued('a ^'), isTrue);
+      expect(isLineToBeContinued(' \\'), isTrue);
+      expect(isLineToBeContinued('a\\'), isFalse);
+      expect(isLineToBeContinued('a \\'), isTrue);
+    });
+
+    test('isLineComment', () {
+      expect(shellScriptLineIsComment(''), isFalse);
+      expect(shellScriptLineIsComment('a'), isFalse);
+      expect(shellScriptLineIsComment('\\'), isFalse);
+      expect(shellScriptLineIsComment('//'), isTrue);
+      expect(shellScriptLineIsComment('//a'), isFalse);
+      expect(shellScriptLineIsComment('// '), isTrue);
+      expect(shellScriptLineIsComment('///'), isTrue);
+      expect(shellScriptLineIsComment('///a'), isFalse);
+      expect(shellScriptLineIsComment('/// '), isTrue);
+      expect(shellScriptLineIsComment('#a'), isTrue);
+    });
+
+    test('environmentFilterOutVmOptions', () {
+      var env = {
+        'DART_VM_OPTIONS':
+            '--pause-isolates-on-start --enable-vm-service:51156',
+      };
+      env = environmentFilterOutVmOptions(env);
+      expect(env, isEmpty);
+      env = {
+        'DART_VM_OPTIONS': '--enable-vm-service:51156',
+        'TEKARTIK_DART_VM_OPTIONS': '--profile',
+      };
+      env = environmentFilterOutVmOptions(env);
+      expect(env, {
+        'TEKARTIK_DART_VM_OPTIONS': '--profile',
+        'DART_VM_OPTIONS': '--profile',
+      });
+    });
+
+    test('shellSplit', () {
+      // We differ from io implementation
+      if (Platform.isWindows) {
+        expect(shellSplit(r'"\\"'), [r'\\']);
+      } else {
+        expect(shellSplit(r'"\\"'), [r'\']);
+      }
+      expect(shellSplit('Hello  world'), ['Hello', 'world']);
+      expect(shellSplit('"Hello  world"'), ['Hello  world']);
+      expect(shellSplit("'Hello  world'"), ['Hello  world']);
+      expect(
+        shellSplit(
+          'curl --location --request POST "https://postman-echo.com/post" --data "This is expected to be sent back as part of response body."',
+        ),
+        [
+          'curl',
+          '--location',
+          '--request',
+          'POST',
+          'https://postman-echo.com/post',
+          '--data',
+          'This is expected to be sent back as part of response body.',
+        ],
+      );
+    });
+
+    test('shellJoin', () {
+      void testSplitJoin(String command, {String? expected}) {
+        var parts = shellSplit(command);
+        var joined = shellJoin(parts);
+        expect(joined, expected ?? command, reason: parts.toString());
+      }
+
+      testSplitJoin('foo');
+      testSplitJoin('foo bar');
+      // testSplitJoin(r'\');
+      testSplitJoin('"foo bar"');
+      testSplitJoin("'foo bar'", expected: '"foo bar"');
+    });
+
+    test('findExecutableSync', () {
+      expect(findExecutableSync('dart', []), isNull);
+      expect(findExecutableSync('pub', []), isNull);
+
+      expect(findExecutableSync('dart', [dartSdkBinDirPath]), dartExecutable);
+      if (dartVersion < Version(2, 17, 0, pre: '0')) {
+        // no longer supported
+        expect(findExecutableSync('pub', [dartSdkBinDirPath]), isNotNull);
+      }
+    });
+    test('findExecutableSync local', () {
+      var currentDirScriptPath = p.join('test', 'src', currentDirScriptName);
+      var found = findExecutableSync(currentDirScriptPath, ['.']);
+      var ext = Platform.isWindows ? '.bat' : '';
+
+      expect(found, p.absolute(p.normalize('$currentDirScriptPath$ext')));
+    });
+    test('resolve', () {
+      var currentDirScriptPath = p.join('test', 'src', currentDirScriptName);
+      var found = resolveExecutableFullPathSync(
+        p.absolute(currentDirScriptPath),
+      );
+      var ext = Platform.isWindows ? '.bat' : '';
+
+      expect(found, p.absolute(p.normalize('$currentDirScriptPath$ext')));
+    });
+    test('folder not executable', () {
+      expect(findExecutableSync('test', ['.']), isNull);
+    });
+
+    test('various', () {
+      expect(
+        shellScriptSplitLines('''
+     a ^
+     
+     b
+    '''),
+        ['a', 'b'],
+      );
+      expect(
+        shellScriptSplitLines('''
+     a ^
+     b
+     
+     c
+    '''),
+        ['a b', 'c'],
+      );
+      expect(
+        shellScriptSplitLines('''
+a ^
+ "b" ^
+ "c" d
+e
+    '''),
+        ['a "b" "c" d', 'e'],
+      );
+    });
+
+    test('streamSinkWrite', () async {
+      var controller = ShellLinesController(encoding: systemEncoding);
+      controller.writeln('t');
+      controller.writeln('éà');
+      controller.writeln('你好');
+      controller.close();
+      var list = await controller.stream.toList();
+      if (!Platform.isWindows) {
+        expect(list, ['t', 'éà', '你好']);
+      } else {
+        // Don't test other non supported characters
+        expect(list.first, 't');
+        expect(list[1], 'éà');
+      }
+
+      controller = ShellLinesController(encoding: utf8);
+      controller.writeln('t');
+      controller.writeln('éà');
+      controller.writeln('你好');
+      controller.close();
+      expect(await controller.stream.toList(), ['t', 'éà', '你好']);
+    });
+  });
+}

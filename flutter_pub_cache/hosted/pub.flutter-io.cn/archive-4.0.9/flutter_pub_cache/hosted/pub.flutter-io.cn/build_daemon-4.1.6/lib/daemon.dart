@@ -1,0 +1,194 @@
+// Copyright (c) 2019, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:async';
+import 'dart:io';
+
+import 'package:built_value/serializer.dart';
+import 'package:watcher/watcher.dart';
+
+import 'change_provider.dart';
+import 'constants.dart';
+import 'daemon_builder.dart';
+import 'data/build_target.dart';
+import 'src/file_permissions.dart';
+import 'src/file_wait.dart';
+import 'src/server.dart';
+import 'src/server_info.dart';
+
+/// The long running daemon process.
+///
+/// Obtains a file lock to ensure a single instance and writes various status
+/// files to be used by clients for connection.
+///
+/// Also starts a [Server] to listen for build target registration and event
+/// notification.
+class Daemon {
+  final String _workingDirectory;
+  final String? _daemonSharedPath;
+  final RandomAccessFile? _lock;
+  final _doneCompleter = Completer<int>();
+
+  Server? _server;
+  StreamSubscription? _sub;
+
+  /// Creates a long running daemon process for builds in [workingDirectory].
+  ///
+  /// Optionally pass `daemonSharedPath` to use a separate shared path for lock
+  /// files. Avoid using globally shared paths on shared machines.
+  Daemon(String workingDirectory, {String? daemonSharedPath})
+    : _workingDirectory = workingDirectory,
+      _daemonSharedPath = daemonSharedPath,
+      _lock = _tryGetLock(workingDirectory, daemonSharedPath: daemonSharedPath);
+
+  /// Returns exit code.
+  Future<int> get onDone => _doneCompleter.future;
+
+  Future<void> stop({String message = '', int failureType = 0}) =>
+      _server!.stop(message: message, failureType: failureType);
+
+  bool get hasLock => _lock != null;
+
+  /// Returns the current version of the running build daemon.
+  ///
+  /// Null if one isn't running.
+  Future<String?> runningVersion() async {
+    final versionFile = File(
+      versionFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+    );
+    if (!await waitForFile(versionFile)) return null;
+    return versionFile.readAsStringSync();
+  }
+
+  /// Returns the current options of the running build daemon.
+  ///
+  /// Null if one isn't running.
+  Future<Set<String>> currentOptions() async {
+    final optionsFile = File(
+      optionsFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+    );
+    if (!await waitForFile(optionsFile)) return <String>{};
+    return optionsFile.readAsLinesSync().toSet();
+  }
+
+  Future<void> start(
+    Set<String> options,
+    DaemonBuilder builder,
+    ChangeProvider changeProvider, {
+    Serializers? serializersOverride,
+    bool Function(BuildTarget, Iterable<WatchEvent>)? shouldBuild,
+    Duration timeout = defaultIdleTimeout,
+  }) async {
+    if (_server != null || _lock == null) return;
+    _handleGracefulExit();
+
+    _createVersionFile();
+    _createOptionsFile(options);
+
+    final server = _server = Server(
+      builder,
+      timeout,
+      changeProvider,
+      serializersOverride: serializersOverride,
+      shouldBuild: shouldBuild,
+    );
+    final port = await server.listen();
+    _createPortFile(port);
+
+    unawaited(
+      server.onDone.then((exitCode) async {
+        await _cleanUp(exitCode);
+      }),
+    );
+  }
+
+  Future<void> _cleanUp(int exitCode) async {
+    await _server?.stop();
+    await _sub?.cancel();
+
+    // Windows doesn't allow `Directory.deleteSync` while the lock is held, so
+    // delete exact files.
+    for (final path in [
+      portFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+      versionFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+      optionsFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+    ]) {
+      try {
+        File(path).deleteSync();
+      } catch (_) {}
+    }
+
+    // Close the lock.
+    _lock?.closeSync();
+
+    // Leave the directory and lock file: there's not much value in cleaning up
+    // further and it avoids a race if a new daemon starts up immediately.
+
+    if (!_doneCompleter.isCompleted) _doneCompleter.complete(exitCode);
+  }
+
+  void _createPortFile(int port) {
+    final portFile = File(
+      portFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+    );
+    ServerInfo(port, _server!.token).writeToFile(portFile);
+  }
+
+  void _createVersionFile() => File(
+    versionFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+  ).writeAsStringSync(currentVersion);
+
+  void _createOptionsFile(Set<String> options) => File(
+    optionsFilePath(_workingDirectory, daemonSharedPath: _daemonSharedPath),
+  ).writeAsStringSync(options.toList().join('\n'));
+
+  void _handleGracefulExit() {
+    var cancelCount = 0;
+    _sub = ProcessSignal.sigint.watch().listen((signal) async {
+      if (signal == ProcessSignal.sigint) {
+        cancelCount++;
+        await _server!.stop();
+        if (cancelCount > 1) exit(1);
+      }
+    });
+  }
+}
+
+RandomAccessFile? _tryGetLock(
+  String workingDirectory, {
+  required String? daemonSharedPath,
+}) {
+  try {
+    _createDaemonWorkspace(
+      workingDirectory,
+      daemonSharedPath: daemonSharedPath,
+    );
+    final lock = File(
+      lockFilePath(workingDirectory, daemonSharedPath: daemonSharedPath),
+    ).openSync(mode: FileMode.write)..lockSync();
+    return lock;
+  } on FileSystemException {
+    return null;
+  }
+}
+
+void _createDaemonWorkspace(
+  String workingDirectory, {
+  required String? daemonSharedPath,
+}) {
+  try {
+    final workspace = daemonWorkspace(
+      workingDirectory,
+      daemonSharedPath: daemonSharedPath,
+    );
+    final directory = Directory(workspace);
+    final isNew = !directory.existsSync();
+    directory.createSync(recursive: true);
+    if (isNew && daemonSharedPath == null) {
+      FilePermissions.makeUserPrivate(workspace);
+    }
+  } catch (e) {
+    throw Exception('Unable to create daemon workspace: $e');
+  }
+}

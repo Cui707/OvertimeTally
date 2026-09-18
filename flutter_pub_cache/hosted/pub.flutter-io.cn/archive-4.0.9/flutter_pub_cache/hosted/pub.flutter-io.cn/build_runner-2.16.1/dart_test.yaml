@@ -1,0 +1,8 @@
+reporter: failures-only
+timeout: 3m
+
+tags:
+  integration1:
+  integration2:
+  integration3:
+  integration4:

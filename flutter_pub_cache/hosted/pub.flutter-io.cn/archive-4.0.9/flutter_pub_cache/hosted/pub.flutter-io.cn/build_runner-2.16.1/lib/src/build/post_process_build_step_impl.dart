@@ -1,0 +1,83 @@
+// Copyright (c) 2025, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:build/build.dart';
+import 'package:crypto/crypto.dart' show Digest;
+
+import 'asset_content.dart';
+import 'builder_filesystem.dart';
+import 'resolver/asset_ids.dart';
+
+class PostProcessBuildStepImpl implements PostProcessBuildStep {
+  @override
+  final AssetId inputId;
+  final BuilderFilesystem buildFilesystem;
+
+  final void Function(AssetId) _addAsset;
+  final void Function(AssetId) _deleteAsset;
+
+  final Map<AssetId, AssetContent> outputs = {};
+
+  PostProcessBuildStepImpl({
+    required this.inputId,
+    required this.buildFilesystem,
+    required void Function(AssetId) addAsset,
+    required void Function(AssetId) deleteAsset,
+  }) : _addAsset = addAsset,
+       _deleteAsset = deleteAsset;
+
+  @override
+  Future<Digest> digest(AssetId id) async {
+    id = id.normalize();
+    return inputId == id
+        ? (await buildFilesystem.contentOf(id)).digest
+        : Future.error(InvalidInputException(id));
+  }
+
+  @override
+  Future<List<int>> readInputAsBytes() async {
+    return (await buildFilesystem.contentOf(inputId)).bytes;
+  }
+
+  @override
+  Future<String> readInputAsString({Encoding encoding = utf8}) async {
+    return (await buildFilesystem.contentOf(
+      inputId,
+    )).stringValue(encoding: encoding);
+  }
+
+  @override
+  Future<void> writeAsBytes(AssetId id, FutureOr<List<int>> bytes) async {
+    id = id.normalize();
+    _addAsset(id);
+    outputs[id] = AssetContent.bytes(await bytes);
+  }
+
+  @override
+  Future<void> writeAsString(
+    AssetId id,
+    FutureOr<String> content, {
+    Encoding encoding = utf8,
+  }) async {
+    id = id.normalize();
+    _addAsset(id);
+    outputs[id] = AssetContent.string(await content, encoding: encoding);
+  }
+
+  /// Marks an asset for deletion in the post process step.
+  @override
+  void deletePrimaryInput() {
+    _deleteAsset(inputId);
+  }
+
+  /// Waits for work to finish and cleans up resources.
+  ///
+  /// This method should be called after a build has completed. After the
+  /// returned [Future] completes then all outputs have been written.
+  @override
+  Future<void> complete() async {}
+}

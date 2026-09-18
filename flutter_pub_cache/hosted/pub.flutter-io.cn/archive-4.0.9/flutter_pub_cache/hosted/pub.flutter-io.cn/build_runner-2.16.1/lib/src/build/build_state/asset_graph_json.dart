@@ -1,0 +1,104 @@
+// Copyright (c) 2026, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import '../../build_plan/build_spec_digest.dart';
+import '../library_cycle_graph/phased_asset_deps.dart';
+import 'incremental_build_state.dart';
+import 'serializers.dart';
+
+/// State stored in `asset_graph.json`.
+///
+/// Enough information to determine whether an incremental build is possible,
+/// and if so exactly what should be rebuilt.
+class AssetGraphJson {
+  final BuildSpecDigest buildPlanDigest;
+  final IncrementalBuildState incrementalBuildState;
+  final PhasedAssetDeps phasedAssetDeps;
+
+  AssetGraphJson({
+    required this.buildPlanDigest,
+    required this.incrementalBuildState,
+    required this.phasedAssetDeps,
+  });
+
+  /// Serializes for `asset_graph.json`.
+  static Uint8List serialize({
+    required BuildSpecDigest buildPlanDigest,
+    required IncrementalBuildState buildState,
+    required PhasedAssetDeps phasedAssetDeps,
+  }) {
+    // Serialize fields first so all `AssetId` instances are seen by
+    // `identityAssetIdSeralizer`.
+    final serializedBuildState = serializers.serializeWith(
+      IncrementalBuildState.serializer,
+      buildState,
+    );
+    final serializedBuildPlanDigest = serializers.serializeWith(
+      BuildSpecDigest.serializer,
+      buildPlanDigest,
+    );
+    final serializedPhasedAssetDeps = serializers.serializeWith(
+      PhasedAssetDeps.serializer,
+      phasedAssetDeps,
+    );
+    final result = {
+      'version': _version,
+      'ids': identityAssetIdSerializer.serializedObjects,
+      'buildState': serializedBuildState,
+      'buildPlanDigest': serializedBuildPlanDigest,
+      'phasedAssetDeps': serializedPhasedAssetDeps,
+    };
+    identityAssetIdSerializer.reset();
+    return jsonUtf8.encode(result) as Uint8List;
+  }
+
+  /// Deserializes from `asset_graph.json`.
+  ///
+  /// Returns `null` if there is a version mismatch or any format mismatch.
+  static AssetGraphJson? deserialize(Uint8List bytes) {
+    try {
+      final deserialized = jsonUtf8.decode(bytes);
+      if (deserialized is! Map) return null;
+      if (deserialized['version'] != _version) return null;
+
+      identityAssetIdSerializer.deserializeWithObjects(
+        (deserialized['ids'] as List).map(
+          (id) => assetIdSerializer.deserialize(serializers, id as Object),
+        ),
+      );
+
+      final buildPlanDigest = serializers.deserializeWith(
+        BuildSpecDigest.serializer,
+        deserialized['buildPlanDigest'],
+      );
+
+      final buildState = serializers.deserializeWith(
+        IncrementalBuildState.serializer,
+        deserialized['buildState'],
+      );
+
+      final phasedAssetDeps = serializers.deserializeWith(
+        PhasedAssetDeps.serializer,
+        deserialized['phasedAssetDeps'],
+      );
+
+      return AssetGraphJson(
+        incrementalBuildState: buildState!,
+        buildPlanDigest: buildPlanDigest!,
+        phasedAssetDeps: phasedAssetDeps!,
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      identityAssetIdSerializer.reset();
+    }
+  }
+}
+
+/// Increment whenever older `asset_graph.json` files should be rejected.
+const _version = 47;
+final jsonUtf8 = json.fuse(utf8);

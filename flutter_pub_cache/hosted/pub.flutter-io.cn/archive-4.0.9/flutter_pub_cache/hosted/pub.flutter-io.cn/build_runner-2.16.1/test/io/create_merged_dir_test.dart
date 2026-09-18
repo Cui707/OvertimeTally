@@ -1,0 +1,619 @@
+// Copyright (c) 2018, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:build/build.dart';
+import 'package:build_runner/src/build/asset_content.dart';
+import 'package:build_runner/src/build/build_state/build_state.dart';
+import 'package:build_runner/src/build/build_state/build_step_result.dart';
+import 'package:build_runner/src/build/build_state/post_process_build_step_id.dart';
+import 'package:build_runner/src/build/build_state/post_process_build_step_result.dart';
+import 'package:build_runner/src/build_plan/build_configs.dart';
+import 'package:build_runner/src/build_plan/build_directory.dart';
+import 'package:build_runner/src/build_plan/build_options.dart';
+import 'package:build_runner/src/build_plan/build_package.dart';
+import 'package:build_runner/src/build_plan/build_packages.dart';
+import 'package:build_runner/src/build_plan/build_phases.dart';
+import 'package:build_runner/src/build_plan/build_plan.dart';
+import 'package:build_runner/src/build_plan/build_spec.dart';
+import 'package:build_runner/src/build_plan/builder_factories.dart';
+import 'package:build_runner/src/build_plan/phase.dart';
+import 'package:build_runner/src/build_plan/testing_overrides.dart';
+import 'package:build_runner/src/io/build_output_reader.dart';
+import 'package:build_runner/src/io/create_merged_dir.dart';
+import 'package:built_collection/built_collection.dart';
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+
+import '../common/common.dart';
+
+void main() {
+  setUpTestLogging();
+
+  group('createMergedDir', () {
+    late BuildPlan buildPlan;
+    late BuildState buildState;
+    final phases = BuildPhases([
+      InBuildPhase(
+        builder: TestBuilder(
+          buildExtensions: appendExtension('.copy', from: '.txt'),
+        ),
+        key: 'TestBuilder',
+        package: 'a',
+      ),
+      InBuildPhase(
+        builder: TestBuilder(
+          buildExtensions: appendExtension('.copy', from: '.txt'),
+        ),
+        key: 'TestBuilder',
+        package: 'b',
+        outputsToArtifactTree: true,
+      ),
+    ]);
+    final sources = {
+      makeAssetId('a|lib/a.txt'): 'a',
+      makeAssetId('a|web/b.txt'): 'b',
+      // Regression test for https://github.com/dart-lang/build/issues/4135.
+      makeAssetId('a|web/lib.txt'): 'lib',
+      makeAssetId('b|lib/c.txt'): 'c',
+      makeAssetId('b|test/outside.txt'): 'not in lib',
+      makeAssetId('a|foo/d.txt'): 'd',
+      makeAssetId('a|.dart_tool/package_config.json'): '''
+{
+  "configVersion": 2,
+  "packages": [
+    {
+      "name": "a",
+      "rootUri": "file:///packages/a",
+      "packageUri": "lib/"
+    }, {
+      "name": "b",
+      "rootUri": "file:///packages/b",
+      "packageUri": "lib/"
+    }
+  ]
+}
+''',
+    };
+    final buildPackages = BuildPackages.singlePackageBuild('a', [
+      BuildPackage.forTesting(name: 'a', isOutput: true, dependencies: ['b']),
+      BuildPackage.forTesting(name: 'b'),
+    ]);
+    late Directory tmpDir;
+    late Directory anotherTmpDir;
+    late InternalTestReaderWriter readerWriter;
+    late BuildOutputReader buildOutputReader;
+
+    setUp(() async {
+      readerWriter = InternalTestReaderWriter(outputRootPackage: 'a');
+      for (final source in sources.entries) {
+        await readerWriter.writeAsString(source.key, source.value);
+      }
+      buildPlan = await BuildPlan.load(
+        await BuildSpec.load(
+          builderFactories: BuilderFactories({}),
+          buildOptions: BuildOptions.forTests(),
+          testingOverrides: TestingOverrides(
+            buildPhases: phases,
+            defaultRootPackageSources: [
+              ...defaultInBuildPackageSources,
+              'foo/**',
+            ].build(),
+            readerWriter: readerWriter,
+            buildPackages: buildPackages,
+          ),
+        ),
+      );
+      buildState = BuildState(
+        buildStepPlan: buildPlan.buildStepPlan,
+        sources: buildPlan.buildInputs.sourceContents.toMap(),
+      );
+
+      for (final id in [
+        ...buildPlan.buildStepPlan.declaredOutputs,
+        ...buildState.actualPostOutputs,
+      ]) {
+        final content =
+            sources[buildPlan.buildStepPlan
+                .stepForDeclaredOutput(id)
+                .primaryInput]!;
+        final step = buildPlan.buildStepPlan.stepForDeclaredOutput(id);
+        final stepResult = BuildStepResult((b) {
+          b.result = true;
+          b.inArtifactTree = false;
+          b.outputs.add(id);
+        });
+        buildState.addBuildStepResult(
+          step: step,
+          result: stepResult,
+          contents: {id: AssetContent.string(content)},
+        );
+        await readerWriter.writeAsString(
+          id,
+          content,
+          inArtifactTree: buildState.isInArtifactTree(id),
+        );
+      }
+      buildOutputReader = BuildOutputReader(
+        buildPackages: buildPlan.buildSpec.buildPackages,
+        readerWriter: buildPlan.readerWriter,
+        buildState: buildState.toFinishedBuildState(),
+      );
+      tmpDir = await Directory.systemTemp.createTemp('build_tests');
+      anotherTmpDir = await Directory.systemTemp.createTemp('build_tests');
+    });
+
+    tearDown(() async {
+      if (tmpDir.existsSync()) {
+        await tmpDir.delete(recursive: true);
+      }
+      if (anotherTmpDir.existsSync()) {
+        await anotherTmpDir.delete(recursive: true);
+      }
+    });
+
+    test('creates a valid merged output directory', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      _expectAllFiles(tmpDir);
+    });
+
+    test('doesnt write deleted files', () async {
+      final targetId = AssetId('b', 'lib/c.txt.copy');
+      buildState.addPostProcessBuildStepResult(
+        step: PostProcessBuildStepId(input: targetId, actionNumber: 1),
+        result: PostProcessBuildStepResult(
+          inArtifactTree: true,
+          deletedPrimaryInput: true,
+        ),
+      );
+      buildOutputReader = BuildOutputReader(
+        buildPackages: buildPlan.buildSpec.buildPackages,
+        readerWriter: buildPlan.readerWriter,
+        buildState: buildState.toFinishedBuildState(),
+      );
+
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      final file = File(p.join(tmpDir.path, 'packages/b/c.txt.copy'));
+      expect(file.existsSync(), isFalse);
+    });
+
+    test('does not include non-lib files from non-root packages', () {
+      expect(
+        buildOutputReader.allAssets(),
+        isNot(contains(makeAssetId('b|test/outside.txt'))),
+      );
+    });
+
+    test('can create multiple merged directories', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+          BuildDirectory(
+            '',
+            outputLocation: OutputLocation(anotherTmpDir.path),
+          ),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      _expectAllFiles(tmpDir);
+      _expectAllFiles(anotherTmpDir);
+    });
+
+    test('errors if there are conflicting directories', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('web', outputLocation: OutputLocation(tmpDir.path)),
+          BuildDirectory('foo', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isFalse);
+      expect(Directory(tmpDir.path).listSync(), isEmpty);
+    });
+
+    test('succeeds if no output directory requested ', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {BuildDirectory('web'), BuildDirectory('foo')}.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+    });
+
+    test('removes the provided root from the output path', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('web', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      final webFiles = <String, dynamic>{'b.txt': 'b', 'b.txt.copy': 'b'};
+
+      _expectFiles(webFiles, tmpDir);
+    });
+
+    test('skips output directories with no assets', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory(
+            'no_assets_here',
+            outputLocation: OutputLocation(tmpDir.path),
+          ),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isFalse);
+      expect(Directory(tmpDir.path).listSync(), isEmpty);
+    });
+
+    test('does not output the input directory', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('web', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      expect(Directory(p.join(tmpDir.path, 'web')).existsSync(), isFalse);
+    });
+
+    test('outputs the packages when input root is provided', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('web', outputLocation: OutputLocation(tmpDir.path)),
+          BuildDirectory(
+            'foo',
+            outputLocation: OutputLocation(anotherTmpDir.path),
+          ),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      final webFiles = <String, dynamic>{
+        'packages/a/a.txt': 'a',
+        'packages/a/a.txt.copy': 'a',
+        'packages/b/c.txt': 'c',
+        'packages/b/c.txt.copy': 'c',
+        '.dart_tool/package_config.json': _expectedPackageConfig('a', [
+          'a',
+          'b',
+          r'$sdk',
+        ]),
+      };
+
+      _expectFiles(webFiles, tmpDir);
+    });
+
+    test('does not nest packages symlinks with no root', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+      _expectNoFiles(<String>{'packages/packages/a/a.txt'}, tmpDir);
+    });
+
+    test('only outputs files contained in the provided root', () async {
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('web', outputLocation: OutputLocation(tmpDir.path)),
+          BuildDirectory(
+            'foo',
+            outputLocation: OutputLocation(anotherTmpDir.path),
+          ),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      final webFiles = <String, dynamic>{'b.txt': 'b', 'b.txt.copy': 'b'};
+
+      final webNoFiles = <String>{}..addAll(['d.txt', 'd.txt.copy']);
+
+      final fooFiles = <String, dynamic>{'d.txt': 'd', 'd.txt.copy': 'd'};
+
+      final fooNoFiles = <String>{}..addAll(['b.txt', 'b.txt.copy']);
+
+      _expectFiles(webFiles, tmpDir);
+      _expectNoFiles(webNoFiles, tmpDir);
+      _expectFiles(fooFiles, anotherTmpDir);
+      _expectNoFiles(fooNoFiles, anotherTmpDir);
+    });
+
+    test('doesnt write files that werent output', () async {
+      buildState = BuildState(
+        buildStepPlan: buildPlan.buildStepPlan,
+        sources: buildPlan.buildInputs.sourceContents.toMap(),
+      );
+      final targetId = AssetId('b', 'lib/c.txt.copy');
+      final stepResult = BuildStepResult((b) {
+        b.inArtifactTree = false;
+      });
+      buildState.addBuildStepResult(
+        step: buildPlan.buildStepPlan.stepForDeclaredOutput(targetId),
+        result: stepResult,
+      );
+      buildOutputReader = BuildOutputReader(
+        buildPackages: buildPlan.buildSpec.buildPackages,
+        readerWriter: buildPlan.readerWriter,
+        buildState: buildState.toFinishedBuildState(),
+      );
+
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      final file = File(p.join(tmpDir.path, 'packages/b/c.txt.copy'));
+      expect(file.existsSync(), isFalse);
+    });
+
+    test('doesnt always write files not matching outputDirs', () async {
+      buildOutputReader = BuildOutputReader(
+        buildPackages: buildPlan.buildSpec.buildPackages,
+        readerWriter: buildPlan.readerWriter,
+        buildState: buildState.toFinishedBuildState(),
+      );
+      final success = await createMergedOutputDirectories(
+        buildDirs: {
+          BuildDirectory('foo', outputLocation: OutputLocation(tmpDir.path)),
+        }.build(),
+        buildPackages: buildPackages,
+        buildOutputReader: buildOutputReader,
+        outputSymlinksOnly: false,
+      );
+      expect(success, isTrue);
+
+      final expectedFiles = <String, dynamic>{
+        'd.txt': 'd',
+        'd.txt.copy': 'd',
+        'packages/a/a.txt': 'a',
+        'packages/b/c.txt': 'c',
+        '.dart_tool/package_config.json': _expectedPackageConfig('a', [
+          'a',
+          'b',
+          r'$sdk',
+        ]),
+      };
+      _expectFiles(expectedFiles, tmpDir);
+    });
+
+    group('existing output dir handling', () {
+      late File garbageFile;
+      setUp(() {
+        garbageFile = File(p.join(tmpDir.path, 'garbage_file.txt'))
+          ..createSync();
+      });
+
+      test('fails the build', () async {
+        final success = await createMergedOutputDirectories(
+          buildDirs: {
+            BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+          }.build(),
+          buildPackages: buildPackages,
+          buildOutputReader: buildOutputReader,
+          outputSymlinksOnly: false,
+        );
+        expect(success, isFalse);
+        expect(
+          garbageFile.existsSync(),
+          isTrue,
+          reason: 'Should not delete existing files.',
+        );
+        final file = File(p.join(tmpDir.path, 'web/b.txt'));
+        expect(
+          file.existsSync(),
+          isFalse,
+          reason: 'Should not copy any files.',
+        );
+      });
+    });
+
+    group('Empty directory cleanup', () {
+      test('removes directories that become empty', () async {
+        var success = await createMergedOutputDirectories(
+          buildDirs: {
+            BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+          }.build(),
+          buildPackages: buildPackages,
+          buildOutputReader: buildOutputReader,
+          outputSymlinksOnly: false,
+        );
+        expect(success, isTrue);
+        final removes = ['a|lib/a.txt', 'a|lib/a.txt.copy'];
+        for (final remove in removes) {
+          final removeId = makeAssetId(remove);
+          buildState.addPostProcessBuildStepResult(
+            step: PostProcessBuildStepId(input: removeId, actionNumber: 1),
+            result: PostProcessBuildStepResult(
+              inArtifactTree: true,
+              deletedPrimaryInput: true,
+            ),
+          );
+        }
+        // Recreate buildOutputReader so it notices the delete.
+        buildOutputReader = BuildOutputReader(
+          buildPackages: buildPlan.buildSpec.buildPackages,
+          readerWriter: buildPlan.readerWriter,
+          buildState: buildState.toFinishedBuildState(),
+        );
+        success = await createMergedOutputDirectories(
+          buildDirs: {
+            BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+          }.build(),
+          buildPackages: buildPackages,
+          buildOutputReader: buildOutputReader,
+          outputSymlinksOnly: false,
+        );
+        expect(success, isTrue);
+        final packageADir = p.join(tmpDir.path, 'packages', 'a');
+        expect(Directory(packageADir).existsSync(), isFalse);
+      });
+    });
+
+    group('Cleanup bounds checking', () {
+      late Directory unrelatedDir;
+
+      setUp(() async {
+        unrelatedDir = await Directory.systemTemp.createTemp('unrelated');
+      });
+
+      tearDown(() async {
+        if (unrelatedDir.existsSync()) {
+          await unrelatedDir.delete(recursive: true);
+        }
+      });
+
+      test('does not delete files outside the output directory', () async {
+        final unrelatedFile = File(
+          p.join(unrelatedDir.path, 'unrelated_file.txt'),
+        )..createSync();
+
+        final traversalPath = p.relative(unrelatedFile.path, from: tmpDir.path);
+        final manifestFile = File(p.join(tmpDir.path, '.build.manifest'));
+        manifestFile.writeAsStringSync(traversalPath);
+
+        await createMergedOutputDirectories(
+          buildDirs: {
+            BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+          }.build(),
+          buildPackages: buildPackages,
+          buildOutputReader: buildOutputReader,
+          outputSymlinksOnly: false,
+        );
+
+        expect(unrelatedFile.existsSync(), isTrue);
+      });
+
+      test('does not traverse symlinks to delete external files', () async {
+        final unrelatedFile = File(
+          p.join(unrelatedDir.path, 'unrelated_file.txt'),
+        )..createSync();
+
+        final linkPath = p.join(tmpDir.path, 'link');
+        Link(linkPath).createSync(unrelatedDir.path);
+
+        final manifestFile = File(p.join(tmpDir.path, '.build.manifest'));
+        final manifestPath = 'link/unrelated_file.txt';
+        manifestFile.writeAsStringSync(manifestPath);
+
+        await createMergedOutputDirectories(
+          buildDirs: {
+            BuildDirectory('', outputLocation: OutputLocation(tmpDir.path)),
+          }.build(),
+          buildPackages: buildPackages,
+          buildOutputReader: buildOutputReader,
+          outputSymlinksOnly: false,
+        );
+
+        expect(unrelatedFile.existsSync(), isTrue);
+      });
+    });
+  });
+}
+
+String _expectedPackageConfig(
+  String rootPackage,
+  List<String> packages,
+) => jsonEncode({
+  'configVersion': 2,
+  'packages': [
+    for (final package in packages)
+      if (package == rootPackage)
+        {'name': package, 'rootUri': '../', 'packageUri': 'packages/$package'}
+      else
+        {'name': package, 'rootUri': '../packages/$package', 'packageUri': ''},
+  ],
+});
+
+void _expectFiles(Map<String, dynamic> expectedFiles, Directory dir) {
+  expectedFiles['.build.manifest'] = allOf(
+    expectedFiles.keys.map(contains).toList(),
+  );
+  expectedFiles.forEach((path, content) {
+    final file = File(p.join(dir.path, path));
+    expect(file.existsSync(), isTrue, reason: 'Missing file at $path.');
+    expect(
+      file.readAsStringSync(),
+      content,
+      reason: 'Incorrect content for file at $path',
+    );
+  });
+}
+
+void _expectNoFiles(Set<String> expectedFiles, Directory dir) {
+  for (final path in expectedFiles) {
+    final file = File(p.join(dir.path, path));
+    expect(!file.existsSync(), isTrue, reason: 'File found at $path.');
+  }
+}
+
+void _expectAllFiles(Directory dir) {
+  final expectedFiles = <String, dynamic>{
+    'foo/d.txt': 'd',
+    'foo/d.txt.copy': 'd',
+    'packages/a/a.txt': 'a',
+    'packages/a/a.txt.copy': 'a',
+    'packages/b/c.txt': 'c',
+    'packages/b/c.txt.copy': 'c',
+    'web/b.txt': 'b',
+    'web/b.txt.copy': 'b',
+    '.dart_tool/package_config.json': _expectedPackageConfig('a', [
+      'a',
+      'b',
+      r'$sdk',
+    ]),
+  };
+  _expectFiles(expectedFiles, dir);
+}

@@ -1,0 +1,9 @@
+# This file configures the analyzer, which statically analyzes Dart code to
+# check for errors, warnings, and lints.
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    # vendored 依赖缓存（PUB_CACHE），不应参与本项目的静态分析。
+    - flutter_pub_cache/**
