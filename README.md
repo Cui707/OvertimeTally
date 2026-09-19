@@ -16,26 +16,5 @@
 - **导出**：导出当月 `.xlsx`（含合计行），系统原生保存弹窗；重名自动命名 `文件名（1）.xlsx`。
 - **适配**：Material 3 中文界面，响应式卡片，窄屏不溢出；含自适应应用图标。
 
-## 技术栈
-Flutter 3.41 / Dart 3.11 · `provider` · `sqflite` · `intl` · `excel` + `file_picker` · `path_provider`
-
-## 运行与测试
-```bash
-flutter pub get
-flutter run -d android     # 运行
-flutter analyze            # 静态检查
-flutter test               # 43 个测试
-flutter build apk          # 打包
-```
-
-## V1.0.0 更新说明
-- 首个正式版本。
-- 完成打卡、跨零点关联、加班/加班费/调休规则计算、月度日历、调休管理、月度统计与 Excel 导出。
-- 加班费改为按小时向下取整、月度独立累计。
-- 新增删除打卡记录（打卡页 + 日历页长按）。
-- 统计页新增工作日/周末/当月加班总时长标注；卡片响应式适配窄屏。
-- 新增应用图标（Android 自适应 / Web / Windows）。
-- 质量：`flutter analyze` 0 问题，43 个测试全通过，APK 构建成功。
-
 ## 已知限制
 - 核心适配 Android；Release 包目前使用 debug 签名，上架前需配置正式签名。
