@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:overtime_tally/core/date_x.dart';
+import 'package:overtime_tally/core/work_rules.dart';
 import 'package:overtime_tally/data/in_memory_repository.dart';
+import 'package:overtime_tally/data/settings_store.dart';
 import 'package:overtime_tally/main.dart';
+import 'package:overtime_tally/pages/settings_page.dart';
+import 'package:overtime_tally/providers/overtime_provider.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   testWidgets('应用启动后展示打卡页与四个底部入口', (tester) async {
@@ -159,5 +164,53 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(await repository.dayRecordFor(dateOnly(today)), isNull);
+  });
+
+  testWidgets('设置页可修改并保存规则，恢复默认可还原', (tester) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      OvertimeTallyApp(
+        repository: InMemoryOvertimeRepository(),
+        settingsStore: InMemorySettingsStore(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.settings_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('标准上班时间'), findsOneWidget);
+    expect(find.text('允许延迟上班时长（分钟）'), findsOneWidget);
+    expect(find.text('每日总跨度（小时）'), findsOneWidget);
+    expect(find.text('工作日加班费每时（元）'), findsOneWidget);
+    expect(find.text('周末加班费每时（元）'), findsOneWidget);
+    expect(find.text('加班起算时长（分钟）'), findsOneWidget);
+    expect(find.text('加班费起算时长（分钟）'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, '工作日加班费每时（元）'),
+      '60',
+    );
+    await tester.pump();
+    await tester.tap(find.text('保存设置'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('设置已保存'), findsOneWidget);
+
+    final context = tester.element(find.byType(SettingsPage));
+    final provider = Provider.of<OvertimeProvider>(context, listen: false);
+    expect(provider.rules.weekdayRatePerHour, 60);
+
+    await tester.tap(find.text('恢复默认'));
+    await tester.pumpAndSettle();
+    final restored = Provider.of<OvertimeProvider>(
+      tester.element(find.byType(SettingsPage)),
+      listen: false,
+    );
+    expect(restored.rules, WorkRules.standard);
   });
 }

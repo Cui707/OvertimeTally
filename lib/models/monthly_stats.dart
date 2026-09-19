@@ -7,6 +7,7 @@ class MonthlyStats {
     this.compUsedMinutes = 0,
     this.weekdayRatePerHour = 30,
     this.weekendRatePerHour = 40,
+    this.payUnitMinutes = 60,
   });
 
   /// 所属月份（当月第一天）。
@@ -26,6 +27,9 @@ class MonthlyStats {
 
   /// 周末加班费率（元/小时）。
   final double weekendRatePerHour;
+
+  /// 加班费计费单位（分钟，向下取整）。
+  final int payUnitMinutes;
 
   /// 当月可用于调休的总时长（来自周末加班）。
   int get compAvailableMinutes => weekendOvertimeMinutes;
@@ -48,22 +52,26 @@ class MonthlyStats {
 
   /// 当月工作日加班费（元）。
   ///
-  /// 加班费按小时向下取整结算：先累计当月工作日加班分钟数，
-  /// 再整体换算为整小时，而不是把每天的加班费相加，
-  /// 这样每天不足 1 小时的零头可以累计成整小时。
+  /// 加班费按计费单位向下取整：先累计当月工作日加班分钟数，
+  /// 再整体换算为整数个计费单位，而不是把每天的加班费相加，
+  /// 这样每天不足一个计费单位的零头可以累计。
   double get weekdayOvertimePay =>
-      _floorHours(weekdayOvertimeMinutes) * weekdayRatePerHour;
+      _floorUnits(weekdayOvertimeMinutes) * weekdayRatePerHour;
 
-  /// 当月周末加班费（元），已排除被调休抵扣的部分，同样按小时向下取整。
+  /// 当月周末加班费（元），已排除被调休抵扣的部分，同样向下取整。
   double get weekendOvertimePay =>
-      _floorHours(effectiveWeekendOvertimeMinutes) * weekendRatePerHour;
+      _floorUnits(effectiveWeekendOvertimeMinutes) * weekendRatePerHour;
 
   /// 当月总加班费（元）。
   double get totalOvertimePay => weekdayOvertimePay + weekendOvertimePay;
 
   static MonthlyStats empty(DateTime month) => MonthlyStats(month: month);
 
-  static int _floorHours(int minutes) => minutes <= 0 ? 0 : minutes ~/ 60;
+  int _floorUnits(int minutes) {
+    if (minutes <= 0) return 0;
+    final unit = payUnitMinutes <= 0 ? 60 : payUnitMinutes;
+    return minutes ~/ unit;
+  }
 
   @override
   String toString() =>

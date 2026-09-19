@@ -3,24 +3,38 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'data/overtime_repository.dart';
+import 'data/settings_store.dart';
 import 'data/sqflite_repository.dart';
 import 'pages/home_shell.dart';
 import 'providers/overtime_provider.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(OvertimeTallyApp(repository: SqfliteOvertimeRepository()));
+  runApp(
+    OvertimeTallyApp(
+      repository: SqfliteOvertimeRepository(),
+      settingsStore: JsonFileSettingsStore(),
+    ),
+  );
 }
 
 class OvertimeTallyApp extends StatelessWidget {
-  const OvertimeTallyApp({super.key, required this.repository});
+  const OvertimeTallyApp({
+    super.key,
+    required this.repository,
+    this.settingsStore,
+  });
 
   final OvertimeRepository repository;
+  final SettingsStore? settingsStore;
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<OvertimeProvider>(
-      create: (_) => OvertimeProvider(repository: repository)..load(),
+      create: (_) => OvertimeProvider(
+        repository: repository,
+        settingsStore: settingsStore,
+      )..load(),
       child: MaterialApp(
         title: 'OvertimeTally',
         debugShowCheckedModeBanner: false,

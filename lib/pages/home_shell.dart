@@ -5,6 +5,7 @@ import '../providers/overtime_provider.dart';
 import 'calendar_page.dart';
 import 'clock_page.dart';
 import 'comp_time_page.dart';
+import 'settings_page.dart';
 import 'stats_page.dart';
 
 /// 应用外壳：底部导航 + 四个页面。
@@ -33,6 +34,17 @@ class _HomeShellState extends State<HomeShell> {
       appBar: AppBar(
         title: Text('OvertimeTally · ${_titles[_index]}'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '设置',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const SettingsPage(),
+              ),
+            ),
+          ),
+        ],
       ),
       body: provider.loading
           ? const Center(

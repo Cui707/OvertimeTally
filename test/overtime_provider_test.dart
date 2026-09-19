@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:overtime_tally/core/work_rules.dart';
 import 'package:overtime_tally/data/in_memory_repository.dart';
+import 'package:overtime_tally/data/settings_store.dart';
 import 'package:overtime_tally/providers/overtime_provider.dart';
 
 void main() {
@@ -146,5 +148,80 @@ void main() {
     expect(provider.stats.weekdayOvertimeMinutes, 0);
     expect(provider.stats.totalOvertimeMinutes, 0);
     expect(provider.stats.totalOvertimePay, 0);
+  });
+
+  test('updateRules 后按新规则重算并持久化', () async {
+    var now = DateTime(2026, 9, 14, 8, 15);
+    final store = InMemorySettingsStore();
+    final provider = OvertimeProvider(
+      repository: InMemoryOvertimeRepository(),
+      settingsStore: store,
+      now: () => now,
+    );
+    await provider.load();
+    await provider.clockIn();
+    now = DateTime(2026, 9, 14, 17, 50); // 应下班 17:30，实际加班 20 分钟
+    await provider.clockOut();
+
+    // 默认阈值 30 分钟：不计加班。
+    expect(provider.stats.weekdayOvertimeMinutes, 0);
+
+    // 阈值改为 0：20 分钟计入加班；计费单位 30 分钟时不足一个单位，费用为 0。
+    await provider.updateRules(
+      provider.rules.copyWith(
+        overtimeThresholdMinutes: 0,
+        payUnitMinutes: 30,
+      ),
+    );
+    expect(provider.stats.weekdayOvertimeMinutes, 20);
+    expect(provider.stats.weekdayOvertimePay, 0);
+
+    // 计费单位改为 10 分钟：floor(20/10)=2 个单位 × 30 元。
+    await provider.updateRules(provider.rules.copyWith(payUnitMinutes: 10));
+    expect(provider.stats.weekdayOvertimePay, 60);
+
+    // 持久化：新 Provider 读取同一存储应得到相同规则。
+    final reloaded = OvertimeProvider(
+      repository: InMemoryOvertimeRepository(),
+      settingsStore: store,
+      now: () => now,
+    );
+    await reloaded.load();
+    expect(reloaded.rules.overtimeThresholdMinutes, 0);
+    expect(reloaded.rules.payUnitMinutes, 10);
+  });
+
+  test('修改每日总跨度会改变应下班时间与加班时长', () async {
+    var now = DateTime(2026, 9, 14, 8, 15);
+    final provider = buildProvider(() => now);
+    await provider.load();
+    await provider.clockIn();
+    now = DateTime(2026, 9, 14, 17, 30);
+    await provider.clockOut();
+
+    // 默认跨度 9h15m：应下班 17:30，加班 0。
+    expect(
+      provider.resultForDate(DateTime(2026, 9, 14)).weekdayOvertimeMinutes,
+      0,
+    );
+
+    // 跨度改为 8 小时：应下班 16:15，加班 75 分钟。
+    await provider.updateRules(
+      provider.rules.copyWith(dailySpanMinutes: 8 * 60),
+    );
+    expect(
+      provider.resultForDate(DateTime(2026, 9, 14)).weekdayOvertimeMinutes,
+      75,
+    );
+  });
+
+  test('resetRules 恢复默认设置', () async {
+    final now = DateTime(2026, 9, 14, 9, 0);
+    final provider = buildProvider(() => now);
+    await provider.load();
+    await provider.updateRules(provider.rules.copyWith(weekdayRatePerHour: 99));
+    expect(provider.rules.weekdayRatePerHour, 99);
+    await provider.resetRules();
+    expect(provider.rules, WorkRules.standard);
   });
 }

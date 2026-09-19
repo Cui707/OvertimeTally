@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 
 import '../core/date_x.dart';
+import '../core/work_rules.dart';
 import '../data/overtime_repository.dart';
+import '../data/settings_store.dart';
 import '../models/comp_record.dart';
 import '../models/daily_result.dart';
 import '../models/day_record.dart';
@@ -19,18 +21,19 @@ class CompTimeExceededException implements Exception {
   String toString() => message;
 }
 
-/// 全局状态：选中月份/日期、打卡记录、调休记录与统计结果。
+/// 全局状态：选中月份/日期、打卡记录、调休记录、规则设置与统计结果。
 class OvertimeProvider extends ChangeNotifier {
   OvertimeProvider({
     required OvertimeRepository repository,
-    OvertimeCalculator? calculator,
-    ExcelExportService? exportService,
+    SettingsStore? settingsStore,
+    WorkRules? initialRules,
     DateTime Function()? now,
   })  : _repository = repository,
-        _calculator = calculator ?? const OvertimeCalculator(),
-        _exportService = exportService ??
-            ExcelExportService(calculator ?? const OvertimeCalculator()),
+        _settingsStore = settingsStore ??
+            InMemorySettingsStore(initialRules ?? WorkRules.standard),
         _now = now ?? DateTime.now {
+    _rules = initialRules ?? WorkRules.standard;
+    _calculator = OvertimeCalculator(_rules);
     final today = dateOnly(_now());
     _selectedDate = today;
     _selectedMonth = firstDayOfMonth(today);
@@ -38,9 +41,11 @@ class OvertimeProvider extends ChangeNotifier {
   }
 
   final OvertimeRepository _repository;
-  final OvertimeCalculator _calculator;
-  final ExcelExportService _exportService;
+  final SettingsStore _settingsStore;
   final DateTime Function() _now;
+
+  late WorkRules _rules;
+  late OvertimeCalculator _calculator;
 
   bool _loading = true;
   late DateTime _selectedMonth;
@@ -57,6 +62,9 @@ class OvertimeProvider extends ChangeNotifier {
   List<CompRecord> get compRecords => List.unmodifiable(_compRecords);
   MonthlyStats get stats => _stats;
   String? get errorMessage => _errorMessage;
+
+  /// 当前生效的规则设置。
+  WorkRules get rules => _rules;
 
   /// 指定归属日的记录。
   DayRecord? recordForDate(DateTime date) {
@@ -87,14 +95,32 @@ class OvertimeProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 首次加载。
+  /// 首次加载：先读取规则设置，再加载数据。
   Future<void> load() async {
     _loading = true;
     notifyListeners();
+    try {
+      _rules = await _settingsStore.load();
+    } catch (_) {
+      _rules = WorkRules.standard;
+    }
+    _calculator = OvertimeCalculator(_rules);
     await _reload();
     _loading = false;
     notifyListeners();
   }
+
+  /// 保存并应用新的规则设置，随后按新规则重算所有统计。
+  Future<void> updateRules(WorkRules rules) async {
+    _rules = rules;
+    _calculator = OvertimeCalculator(rules);
+    await _settingsStore.save(rules);
+    await _reload();
+    notifyListeners();
+  }
+
+  /// 恢复默认规则。
+  Future<void> resetRules() => updateRules(WorkRules.standard);
 
   Future<void> _reload() async {
     try {
@@ -261,16 +287,17 @@ class OvertimeProvider extends ChangeNotifier {
 
   /// 导出当前选中月份为 Excel，返回保存路径（取消时返回 null）。
   Future<String?> exportSelectedMonth() async {
-    final bytes = _exportService.buildWorkbook(
+    final exportService = ExcelExportService(_calculator);
+    final bytes = exportService.buildWorkbook(
       month: _selectedMonth,
       dayRecords: _dayRecords,
       compRecords: _compRecords,
     );
     // 由应用生成不冲突的文件名，避免系统把 “（1）” 追加到扩展名之后。
-    final fileName = await _exportService.nextFileName(_selectedMonth);
-    final path = await _exportService.save(bytes: bytes, fileName: fileName);
+    final fileName = await exportService.nextFileName(_selectedMonth);
+    final path = await exportService.save(bytes: bytes, fileName: fileName);
     if (path != null) {
-      await _exportService.confirmSaved(_selectedMonth);
+      await exportService.confirmSaved(_selectedMonth);
     }
     return path;
   }
