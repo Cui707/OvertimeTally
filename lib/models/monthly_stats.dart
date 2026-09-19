@@ -46,21 +46,24 @@ class MonthlyStats {
   int get totalOvertimeMinutes =>
       weekdayOvertimeMinutes + effectiveWeekendOvertimeMinutes;
 
-  /// 工作日加班费（元）。
+  /// 当月工作日加班费（元）。
+  ///
+  /// 加班费按小时向下取整结算：先累计当月工作日加班分钟数，
+  /// 再整体换算为整小时，而不是把每天的加班费相加，
+  /// 这样每天不足 1 小时的零头可以累计成整小时。
   double get weekdayOvertimePay =>
-      _round2(weekdayOvertimeMinutes / 60 * weekdayRatePerHour);
+      _floorHours(weekdayOvertimeMinutes) * weekdayRatePerHour;
 
-  /// 周末加班费（元），已排除被调休抵扣的部分。
+  /// 当月周末加班费（元），已排除被调休抵扣的部分，同样按小时向下取整。
   double get weekendOvertimePay =>
-      _round2(effectiveWeekendOvertimeMinutes / 60 * weekendRatePerHour);
+      _floorHours(effectiveWeekendOvertimeMinutes) * weekendRatePerHour;
 
-  /// 当月总加班费（元，保留两位小数）。
-  double get totalOvertimePay => _round2(weekdayOvertimePay + weekendOvertimePay);
+  /// 当月总加班费（元）。
+  double get totalOvertimePay => weekdayOvertimePay + weekendOvertimePay;
 
   static MonthlyStats empty(DateTime month) => MonthlyStats(month: month);
 
-  static double _round2(double value) =>
-      double.parse(value.toStringAsFixed(2));
+  static int _floorHours(int minutes) => minutes <= 0 ? 0 : minutes ~/ 60;
 
   @override
   String toString() =>

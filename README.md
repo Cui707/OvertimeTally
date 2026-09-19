@@ -1,17 +1,40 @@
-# flutter_application_1
+# OvertimeTally
 
-A new Flutter project.
+记录每日上下班时间，按公司弹性工时与加班调休规则自动核算加班时长、加班费与调休。
 
-## Getting Started
+- 平台：Android 为主（iOS / Windows / Web 可编译，部分功能受限）
+- 版本：1.0.0+1
 
-This project is a starting point for a Flutter application.
+## 功能
+- **打卡**：一键记录实时时间，可手动修改；支持跨零点下班自动关联前一天；可删除当天记录（打卡页按钮 / 日历页长按）。
+- **规则计算**：标准 08:15–17:30，应下班 = 上班 + 9h15m；超应下班 ≥30 分钟才计加班，按实际分钟记录；周末全额计加班。
+- **加班费**：按小时向下取整（工作日 30 元/时、周末 40 元/时），月度按分类别累计后取整，不逐日相加。
+- **日历**：月度视图标注工作日/周末加班与调休，点击编辑、长按删除。
+- **调休**：独立录入/编辑/删除，超额拒绝；抵扣后同步修正总加班与加班费。
+- **统计**：当月加班总时长、总加班费、剩余可调休、已调休，及明细。
+- **导出**：导出当月 `.xlsx`（含合计行），系统原生保存弹窗；重名自动命名 `文件名（1）.xlsx`。
+- **适配**：Material 3 中文界面，响应式卡片，窄屏不溢出；含自适应应用图标。
 
-A few resources to get you started if this is your first Flutter project:
+## 技术栈
+Flutter 3.41 / Dart 3.11 · `provider` · `sqflite` · `intl` · `excel` + `file_picker` · `path_provider`
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 运行与测试
+```bash
+flutter pub get
+flutter run -d android     # 运行
+flutter analyze            # 静态检查
+flutter test               # 43 个测试
+flutter build apk          # 打包
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## V1.0.0 更新说明
+- 首个正式版本。
+- 完成打卡、跨零点关联、加班/加班费/调休规则计算、月度日历、调休管理、月度统计与 Excel 导出。
+- 加班费改为按小时向下取整、月度独立累计。
+- 新增删除打卡记录（打卡页 + 日历页长按）。
+- 统计页新增工作日/周末/当月加班总时长标注；卡片响应式适配窄屏。
+- 新增应用图标（Android 自适应 / Web / Windows）。
+- 质量：`flutter analyze` 0 问题，43 个测试全通过，APK 构建成功。
+
+## 已知限制
+- 核心适配 Android；Release 包目前使用 debug 签名，上架前需配置正式签名。

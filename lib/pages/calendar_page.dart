@@ -5,7 +5,9 @@ import '../core/date_x.dart';
 import '../providers/overtime_provider.dart';
 import '../widgets/month_picker_bar.dart';
 
-/// 月度日历视图，展示每天的加班与调休情况，点击可跳到打卡页编辑。
+/// 月度日历视图，展示每天的加班与调休情况。
+///
+/// 点击某天跳转到打卡页编辑；长按某天可删除当天的打卡记录。
 class CalendarPage extends StatelessWidget {
   const CalendarPage({super.key, required this.onEditDay});
 
@@ -73,6 +75,9 @@ class CalendarPage extends StatelessWidget {
                                   day: day,
                                   isToday: day != null && isSameDate(day, today),
                                   onTap: day == null ? null : () => onEditDay(day),
+                                  onLongPress: day == null
+                                      ? null
+                                      : () => _deleteDay(context, day),
                                 ),
                               ),
                             )
@@ -88,14 +93,58 @@ class CalendarPage extends StatelessWidget {
       ],
     );
   }
+
+  Future<void> _deleteDay(BuildContext context, DateTime day) async {
+    final provider = context.read<OvertimeProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final record = provider.recordForDate(day);
+    if (record == null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('${formatDate(day)} 没有打卡记录')),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除打卡记录'),
+        content: Text(
+          '确定要删除 ${formatDate(day)} 的打卡记录吗？'
+          '该日的上下班时间与备注都会被清除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) {
+      await provider.deleteDayRecord(day);
+      messenger.showSnackBar(
+        SnackBar(content: Text('已删除 ${formatDate(day)} 的打卡记录')),
+      );
+    }
+  }
 }
 
 class _DayCell extends StatelessWidget {
-  const _DayCell({required this.day, required this.isToday, this.onTap});
+  const _DayCell({
+    required this.day,
+    required this.isToday,
+    this.onTap,
+    this.onLongPress,
+  });
 
   final DateTime? day;
   final bool isToday;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -122,6 +171,7 @@ class _DayCell extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(8),
       child: Container(
         margin: const EdgeInsets.all(2),
@@ -179,13 +229,26 @@ class _Legend extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 4,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _item(scheme.primary, '工作日加班'),
-          _item(scheme.tertiary, '周末加班'),
-          _item(scheme.secondary, '调休'),
+          Wrap(
+            spacing: 16,
+            runSpacing: 4,
+            children: [
+              _item(scheme.primary, '工作日加班'),
+              _item(scheme.tertiary, '周末加班'),
+              _item(scheme.secondary, '调休'),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '点击日期查看/编辑，长按日期可删除当天打卡记录',
+            style: TextStyle(
+              fontSize: 11,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
     );

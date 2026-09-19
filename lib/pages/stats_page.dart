@@ -5,6 +5,7 @@ import '../core/date_x.dart';
 import '../providers/overtime_provider.dart';
 import '../widgets/month_picker_bar.dart';
 import '../widgets/stat_tile.dart';
+import '../widgets/stat_tile_grid.dart';
 
 /// 月度统计面板。
 class StatsPage extends StatefulWidget {
@@ -32,48 +33,31 @@ class _StatsPageState extends State<StatsPage> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: StatTile(
-                      label: '当月总加班',
-                      value: formatHours(stats.totalOvertimeMinutes),
-                      icon: Icons.timer_outlined,
-                      emphasis: true,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: StatTile(
-                      label: '当月总加班费',
-                      value: stats.totalOvertimePay.toStringAsFixed(2),
-                      icon: Icons.payments_outlined,
-                      emphasis: true,
-                    ),
-                  ),
-                ],
+          child: StatTileGrid(
+            minTileWidth: 140,
+            maxColumns: 2,
+            tiles: [
+              StatTile(
+                label: '当月加班总时长',
+                value: formatHours(stats.totalOvertimeMinutes),
+                icon: Icons.timer_outlined,
+                emphasis: true,
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: StatTile(
-                      label: '剩余可调休',
-                      value: formatHours(stats.remainingCompMinutes),
-                      icon: Icons.hourglass_bottom,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: StatTile(
-                      label: '当月已调休',
-                      value: formatHours(stats.compUsedMinutes),
-                      icon: Icons.event_available,
-                    ),
-                  ),
-                ],
+              StatTile(
+                label: '当月总加班费',
+                value: stats.totalOvertimePay.toStringAsFixed(2),
+                icon: Icons.payments_outlined,
+                emphasis: true,
+              ),
+              StatTile(
+                label: '剩余可调休',
+                value: formatHours(stats.remainingCompMinutes),
+                icon: Icons.hourglass_bottom,
+              ),
+              StatTile(
+                label: '当月已调休',
+                value: formatHours(stats.compUsedMinutes),
+                icon: Icons.event_available,
               ),
             ],
           ),
@@ -95,12 +79,12 @@ class _StatsPageState extends State<StatsPage> {
                   ),
                   const Divider(height: 20),
                   _DetailRow(
-                    label: '工作日加班',
+                    label: '工作日加班总时长',
                     value: '${formatMinutes(stats.weekdayOvertimeMinutes)}'
                         '（${formatHours(stats.weekdayOvertimeMinutes)} 小时）',
                   ),
                   _DetailRow(
-                    label: '周末加班（总额度）',
+                    label: '周末加班总时长',
                     value: '${formatMinutes(stats.weekendOvertimeMinutes)}'
                         '（${formatHours(stats.weekendOvertimeMinutes)} 小时）',
                   ),
@@ -109,15 +93,21 @@ class _StatsPageState extends State<StatsPage> {
                     value: formatMinutes(stats.compUsedMinutes),
                   ),
                   _DetailRow(
-                    label: '计入加班费的工作日',
-                    value: '${formatHours(stats.weekdayOvertimeMinutes)} 小时 × '
-                        '${stats.weekdayRatePerHour.toStringAsFixed(0)} 元',
+                    label: '当月加班总时长',
+                    value: '${formatMinutes(stats.totalOvertimeMinutes)}'
+                        '（${formatHours(stats.totalOvertimeMinutes)} 小时）',
                   ),
                   _DetailRow(
-                    label: '计入加班费的周末',
-                    value:
-                        '${formatHours(stats.effectiveWeekendOvertimeMinutes)} 小时 × '
-                        '${stats.weekendRatePerHour.toStringAsFixed(0)} 元',
+                    label: '当月工作日加班费',
+                    value: '${stats.weekdayOvertimeMinutes ~/ 60} 小时 × '
+                        '${stats.weekdayRatePerHour.toStringAsFixed(0)} 元 = '
+                        '${stats.weekdayOvertimePay.toStringAsFixed(2)} 元',
+                  ),
+                  _DetailRow(
+                    label: '当月周末加班费',
+                    value: '${stats.effectiveWeekendOvertimeMinutes ~/ 60} 小时 × '
+                        '${stats.weekendRatePerHour.toStringAsFixed(0)} 元 = '
+                        '${stats.weekendOvertimePay.toStringAsFixed(2)} 元',
                   ),
                 ],
               ),
@@ -174,29 +164,35 @@ class _DetailRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final labelStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final valueStyle = theme.textTheme.bodyLarge?.copyWith(
+      fontWeight: FontWeight.w500,
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 150,
-            child: Text(
-              label,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: theme.textTheme.bodyLarge?.copyWith(
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 320) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: labelStyle),
+                const SizedBox(height: 2),
+                Text(value, style: valueStyle),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 150, child: Text(label, style: labelStyle)),
+              Expanded(child: Text(value, style: valueStyle)),
+            ],
+          );
+        },
       ),
     );
   }

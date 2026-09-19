@@ -21,7 +21,9 @@ void main() {
     final result = provider.resultForDate(DateTime(2026, 9, 14));
     expect(result.weekdayOvertimeMinutes, 30);
     expect(provider.stats.weekdayOvertimeMinutes, 30);
-    expect(provider.stats.totalOvertimePay, 15.0);
+    // 30 分钟不足 1 小时，加班费为 0。
+    expect(result.overtimePay, 0);
+    expect(provider.stats.totalOvertimePay, 0);
   });
 
   test('凌晨下班自动关联到前一天', () async {
@@ -125,5 +127,24 @@ void main() {
     expect(provider.selectedMonth, DateTime(2026, 8, 1));
     await provider.goToNextMonth();
     expect(provider.selectedMonth, DateTime(2026, 9, 1));
+  });
+
+  test('删除当天打卡记录后记录消失且统计归零', () async {
+    var now = DateTime(2026, 9, 14, 8, 15);
+    final provider = buildProvider(() => now);
+    await provider.load();
+    await provider.clockIn();
+    now = DateTime(2026, 9, 14, 18, 0);
+    await provider.clockOut();
+
+    expect(provider.recordForDate(DateTime(2026, 9, 14)), isNotNull);
+    expect(provider.stats.weekdayOvertimeMinutes, 30);
+
+    await provider.deleteDayRecord(DateTime(2026, 9, 14));
+
+    expect(provider.recordForDate(DateTime(2026, 9, 14)), isNull);
+    expect(provider.stats.weekdayOvertimeMinutes, 0);
+    expect(provider.stats.totalOvertimeMinutes, 0);
+    expect(provider.stats.totalOvertimePay, 0);
   });
 }

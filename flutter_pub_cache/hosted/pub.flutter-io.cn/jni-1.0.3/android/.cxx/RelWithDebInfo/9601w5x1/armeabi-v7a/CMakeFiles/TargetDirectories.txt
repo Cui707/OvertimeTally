@@ -1,0 +1,3 @@
+D:/CodeSpace/OvertimeTally/flutter_pub_cache/hosted/pub.flutter-io.cn/jni-1.0.3/android/.cxx/RelWithDebInfo/9601w5x1/armeabi-v7a/CMakeFiles/jni.dir
+D:/CodeSpace/OvertimeTally/flutter_pub_cache/hosted/pub.flutter-io.cn/jni-1.0.3/android/.cxx/RelWithDebInfo/9601w5x1/armeabi-v7a/CMakeFiles/edit_cache.dir
+D:/CodeSpace/OvertimeTally/flutter_pub_cache/hosted/pub.flutter-io.cn/jni-1.0.3/android/.cxx/RelWithDebInfo/9601w5x1/armeabi-v7a/CMakeFiles/rebuild_cache.dir

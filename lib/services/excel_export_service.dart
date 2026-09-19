@@ -7,13 +7,20 @@ import '../core/date_x.dart';
 import '../models/comp_record.dart';
 import '../models/daily_result.dart';
 import '../models/day_record.dart';
+import 'export_naming_service.dart';
 import 'overtime_calculator.dart';
 
 /// 负责把某个月的数据导出为 `.xlsx`，并调用系统原生保存弹窗。
 class ExcelExportService {
-  const ExcelExportService(this.calculator);
+  ExcelExportService(
+    this.calculator, {
+    ExportNamingService? namingService,
+  }) : _namingService = namingService ?? ExportNamingService();
 
   final OvertimeCalculator calculator;
+  final ExportNamingService _namingService;
+
+  static const String fileExtension = 'xlsx';
 
   static const List<String> headers = <String>[
     '日期',
@@ -32,9 +39,26 @@ class ExcelExportService {
       '${month.year.toString().padLeft(4, '0')}-'
       '${month.month.toString().padLeft(2, '0')}';
 
+  /// 不含扩展名的基名，例如 `OvertimeTally_2026-09`。
+  String monthFileBase(DateTime month) =>
+      'OvertimeTally_${monthSheetName(month)}';
+
   /// 默认文件名，例如 `OvertimeTally_2026-09.xlsx`。
   String defaultFileName(DateTime month) =>
-      'OvertimeTally_${monthSheetName(month)}.xlsx';
+      '${monthFileBase(month)}.$fileExtension';
+
+  /// 生成不会与已有文件冲突的文件名。
+  ///
+  /// 第二次导出同一月份时为 `OvertimeTally_2026-09（1）.xlsx`，
+  /// 后缀始终位于扩展名之前。
+  Future<String> nextFileName(DateTime month) => _namingService.suggestFileName(
+        base: monthFileBase(month),
+        extension: fileExtension,
+      );
+
+  /// 保存成功后记录一次，供下次生成递增后缀。
+  Future<void> confirmSaved(DateTime month) =>
+      _namingService.confirmSaved(base: monthFileBase(month));
 
   /// 生成工作簿字节内容。
   List<int> buildWorkbook({
@@ -69,7 +93,6 @@ class ExcelExportService {
     var totalWeekday = 0;
     var totalWeekend = 0;
     var totalComp = 0;
-    var totalPay = 0.0;
 
     for (final key in keys) {
       final record = recordByDate[key];
@@ -82,7 +105,6 @@ class ExcelExportService {
       totalWeekday += result.weekdayOvertimeMinutes;
       totalWeekend += result.weekendOvertimeMinutes;
       totalComp += compMinutes;
-      totalPay += result.overtimePay;
 
       sheet.appendRow(<CellValue?>[
         TextCellValue(formatDate(date)),
@@ -97,6 +119,13 @@ class ExcelExportService {
       ]);
     }
 
+    // 加班费按小时向下取整，且月度独立累计（不是把每日加班费相加）。
+    final monthly = calculator.computeMonth(
+      month: month,
+      dayRecords: dayRecords,
+      compRecords: compRecords,
+    );
+
     sheet.appendRow(<CellValue?>[
       TextCellValue('合计'),
       TextCellValue(''),
@@ -105,8 +134,8 @@ class ExcelExportService {
       IntCellValue(totalWeekday),
       IntCellValue(totalWeekend),
       IntCellValue(totalComp),
-      DoubleCellValue(OvertimeCalculator.round2(totalPay)),
-      TextCellValue(''),
+      DoubleCellValue(monthly.totalOvertimePay),
+      TextCellValue('加班费按小时向下取整，按月独立累计'),
     ]);
 
     final bytes = excel.encode();

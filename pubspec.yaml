@@ -37,6 +37,9 @@ dependencies:
   # 调用系统原生保存弹窗
   file_picker: ^8.1.2
 
+  # 导出文件命名计数的持久化目录
+  path_provider: ^2.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -45,7 +48,28 @@ dev_dependencies:
   # encourage good coding practices.
   flutter_lints: ^6.0.0
 
+  # 生成各平台应用图标
+  flutter_launcher_icons: ^0.13.1
+
 flutter:
   # The following line ensures that the Material Icons font is
   # included with your application.
   uses-material-design: true
+
+# 应用图标配置：运行 `dart run flutter_launcher_icons` 生成。
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/OvertimeTallyLogo.png"
+  adaptive_icon_background: "#FCFCFA"
+  adaptive_icon_foreground: "assets/OvertimeTallyLogoForeground.png"
+  web:
+    generate: true
+    image_path: "assets/OvertimeTallyLogo.png"
+    background_color: "#FCFCFA"
+    theme_color: "#FCFCFA"
+  windows:
+    generate: true
+    image_path: "assets/OvertimeTallyLogo.png"
+    icon_size: 256
+

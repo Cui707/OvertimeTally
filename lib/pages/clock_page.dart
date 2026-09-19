@@ -43,10 +43,25 @@ class ClockPage extends StatelessWidget {
         _NoteCard(
           note: record?.note,
           onEdit: () => _editNote(context, date, record?.note),
-          onClear: record == null
-              ? null
-              : () => _deleteRecord(context, date),
         ),
+        if (record != null) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => _deleteRecord(context, date),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('删除当天打卡记录'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+              side: BorderSide(
+                color: Theme.of(context)
+                    .colorScheme
+                    .error
+                    .withValues(alpha: 0.6),
+              ),
+              minimumSize: const Size.fromHeight(48),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -179,11 +194,15 @@ class ClockPage extends StatelessWidget {
 
   Future<void> _deleteRecord(BuildContext context, DateTime date) async {
     final provider = context.read<OvertimeProvider>();
+    final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('删除记录'),
-        content: Text('确定要删除 ${formatDate(date)} 的打卡记录吗？'),
+        title: const Text('删除打卡记录'),
+        content: Text(
+          '确定要删除 ${formatDate(date)} 的打卡记录吗？'
+          '该日的上下班时间与备注都会被清除。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -198,6 +217,9 @@ class ClockPage extends StatelessWidget {
     );
     if (confirmed ?? false) {
       await provider.deleteDayRecord(date);
+      messenger.showSnackBar(
+        SnackBar(content: Text('已删除 ${formatDate(date)} 的打卡记录')),
+      );
     }
   }
 }
@@ -428,11 +450,10 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _NoteCard extends StatelessWidget {
-  const _NoteCard({required this.note, required this.onEdit, this.onClear});
+  const _NoteCard({required this.note, required this.onEdit});
 
   final String? note;
   final VoidCallback onEdit;
-  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -443,20 +464,10 @@ class _NoteCard extends StatelessWidget {
         subtitle: Text(
           (note == null || note!.isEmpty) ? '暂无备注' : note!,
         ),
-        trailing: Wrap(
-          children: [
-            IconButton(
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: '编辑备注',
-            ),
-            if (onClear != null)
-              IconButton(
-                onPressed: onClear,
-                icon: const Icon(Icons.delete_outline),
-                tooltip: '删除当天记录',
-              ),
-          ],
+        trailing: IconButton(
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined),
+          tooltip: '编辑备注',
         ),
       ),
     );

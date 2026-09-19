@@ -34,20 +34,50 @@ void main() {
       expect(result.overtimePay, 0);
     });
 
-    test('加班 30 分钟按 30 分钟计', () {
+    test('加班 30 分钟按 30 分钟计，不足 1 小时加班费为 0', () {
       final result = calculator.computeDay(
         workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 14, 18, 0)),
       );
       expect(result.weekdayOvertimeMinutes, 30);
-      expect(result.overtimePay, 15.0);
+      expect(result.overtimePay, 0);
     });
 
-    test('加班 31 分钟按 31 分钟计', () {
+    test('加班 31 分钟按 31 分钟计，不足 1 小时加班费为 0', () {
       final result = calculator.computeDay(
         workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 14, 18, 1)),
       );
       expect(result.weekdayOvertimeMinutes, 31);
-      expect(result.overtimePay, 15.5);
+      expect(result.overtimePay, 0);
+    });
+
+    test('加班 59 分钟记录 59 分钟，加班费 0 元', () {
+      final result = calculator.computeDay(
+        workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 14, 18, 29)),
+      );
+      expect(result.weekdayOvertimeMinutes, 59);
+      expect(result.overtimePay, 0);
+    });
+
+    test('加班 70 分钟记录 70 分钟，加班费 30 元（按 1 小时结算）', () {
+      final result = calculator.computeDay(
+        workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 14, 18, 40)),
+      );
+      expect(result.weekdayOvertimeMinutes, 70);
+      expect(result.overtimePay, 30);
+    });
+
+    test('加班 90 分钟加班费 30 元，加班 120 分钟加班费 60 元', () {
+      final ninety = calculator.computeDay(
+        workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 14, 19, 0)),
+      );
+      expect(ninety.weekdayOvertimeMinutes, 90);
+      expect(ninety.overtimePay, 30);
+
+      final oneTwenty = calculator.computeDay(
+        workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 14, 19, 30)),
+      );
+      expect(oneTwenty.weekdayOvertimeMinutes, 120);
+      expect(oneTwenty.overtimePay, 60);
     });
 
     test('9:15 上班不算迟到，应下班 18:30', () {
@@ -82,7 +112,7 @@ void main() {
         workday(DateTime(2026, 9, 14, 10, 0), DateTime(2026, 9, 14, 19, 45)),
       );
       expect(result.weekdayOvertimeMinutes, 30);
-      expect(result.overtimePay, 15.0);
+      expect(result.overtimePay, 0);
     });
 
     test('缺下班打卡视为不完整', () {
@@ -136,7 +166,7 @@ void main() {
         workday(DateTime(2026, 9, 14, 8, 15), DateTime(2026, 9, 15, 1, 0)),
       );
       expect(result.weekdayOvertimeMinutes, 450);
-      expect(result.overtimePay, 225.0);
+      expect(result.overtimePay, 210.0);
     });
 
     test('周末跨零点，工作时长全额计入', () {

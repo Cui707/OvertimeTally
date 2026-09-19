@@ -1,0 +1,27 @@
+{
+  "buildFiles": [
+    "D:\\CodeSpace\\OvertimeTally\\flutter_pub_cache\\hosted\\pub.flutter-io.cn\\jni-1.0.3\\src\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\cui19\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "D:\\CodeSpace\\OvertimeTally\\flutter_pub_cache\\hosted\\pub.flutter-io.cn\\jni-1.0.3\\android\\.cxx\\RelWithDebInfo\\9601w5x1\\x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\cui19\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "D:\\CodeSpace\\OvertimeTally\\flutter_pub_cache\\hosted\\pub.flutter-io.cn\\jni-1.0.3\\android\\.cxx\\RelWithDebInfo\\9601w5x1\\x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "jni::@6890427a1f51a3e7e1df": {
+      "artifactName": "jni",
+      "abi": "x86",
+      "output": "D:\\CodeSpace\\OvertimeTally\\build\\jni\\intermediates\\cxx\\RelWithDebInfo\\9601w5x1\\obj\\x86\\libdartjni.so",
+      "runtimeFiles": []
+    }
+  }
+}

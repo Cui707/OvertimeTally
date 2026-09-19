@@ -17,7 +17,9 @@ class OvertimeCalculator {
   /// - 工作日应下班 = 上班时间 + 9 小时 15 分（迟到同样做满 8 小时）；
   /// - 工作日超过应下班 30 分钟（含）才计加班，且按实际分钟全额计入；
   /// - 周末当天工作时长全额计为周末加班；
-  /// - 跨零点下班按次日处理。
+  /// - 跨零点下班按次日处理；
+  /// - 加班费按小时向下取整结算（不足 1 小时不计费），
+  ///   例如加班 59 分钟为 0 元、70 分钟为 1 小时。
   DailyResult computeDay(DayRecord record) {
     final date = dateOnly(record.workDate);
     final weekend = isWeekend(date);
@@ -65,7 +67,7 @@ class OvertimeCalculator {
         clockOut: clockOut,
         workMinutes: overtime,
         weekendOvertimeMinutes: overtime,
-        overtimePay: round2(overtime / 60 * rules.weekendRatePerHour),
+        overtimePay: floorHours(overtime) * rules.weekendRatePerHour,
         note: record.note,
       );
     }
@@ -85,7 +87,7 @@ class OvertimeCalculator {
       requiredClockOut: requiredClockOut,
       workMinutes: workMinutes,
       weekdayOvertimeMinutes: overtime,
-      overtimePay: round2(overtime / 60 * rules.weekdayRatePerHour),
+      overtimePay: floorHours(overtime) * rules.weekdayRatePerHour,
       isLate: late,
       note: record.note,
     );
@@ -124,4 +126,7 @@ class OvertimeCalculator {
 
   /// 保留两位小数。
   static double round2(double value) => double.parse(value.toStringAsFixed(2));
+
+  /// 加班费按小时向下取整：返回分钟数对应的整小时数（不足 1 小时为 0）。
+  static int floorHours(int minutes) => minutes <= 0 ? 0 : minutes ~/ 60;
 }

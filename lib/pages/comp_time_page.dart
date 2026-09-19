@@ -7,6 +7,7 @@ import '../models/comp_record.dart';
 import '../providers/overtime_provider.dart';
 import '../widgets/month_picker_bar.dart';
 import '../widgets/stat_tile.dart';
+import '../widgets/stat_tile_grid.dart';
 
 /// 调休信息与录入页面。
 class CompTimePage extends StatelessWidget {
@@ -27,31 +28,25 @@ class CompTimePage extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: StatTile(
-                  label: '可用调休',
-                  value: formatHours(stats.compAvailableMinutes),
-                  icon: Icons.card_giftcard,
-                ),
+          child: StatTileGrid(
+            minTileWidth: 100,
+            maxColumns: 3,
+            tiles: [
+              StatTile(
+                label: '可用调休',
+                value: formatHours(stats.compAvailableMinutes),
+                icon: Icons.card_giftcard,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: StatTile(
-                  label: '已调休',
-                  value: formatHours(stats.compUsedMinutes),
-                  icon: Icons.event_available,
-                ),
+              StatTile(
+                label: '已调休',
+                value: formatHours(stats.compUsedMinutes),
+                icon: Icons.event_available,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: StatTile(
-                  label: '剩余',
-                  value: formatHours(stats.remainingCompMinutes),
-                  icon: Icons.hourglass_bottom,
-                  emphasis: true,
-                ),
+              StatTile(
+                label: '剩余',
+                value: formatHours(stats.remainingCompMinutes),
+                icon: Icons.hourglass_bottom,
+                emphasis: true,
               ),
             ],
           ),

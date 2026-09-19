@@ -260,16 +260,19 @@ class OvertimeProvider extends ChangeNotifier {
   }
 
   /// 导出当前选中月份为 Excel，返回保存路径（取消时返回 null）。
-  Future<String?> exportSelectedMonth() {
+  Future<String?> exportSelectedMonth() async {
     final bytes = _exportService.buildWorkbook(
       month: _selectedMonth,
       dayRecords: _dayRecords,
       compRecords: _compRecords,
     );
-    return _exportService.save(
-      bytes: bytes,
-      fileName: _exportService.defaultFileName(_selectedMonth),
-    );
+    // 由应用生成不冲突的文件名，避免系统把 “（1）” 追加到扩展名之后。
+    final fileName = await _exportService.nextFileName(_selectedMonth);
+    final path = await _exportService.save(bytes: bytes, fileName: fileName);
+    if (path != null) {
+      await _exportService.confirmSaved(_selectedMonth);
+    }
+    return path;
   }
 
   Future<void> _refreshAfterMutation(DateTime affectedDate) async {
