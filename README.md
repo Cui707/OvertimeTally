@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # OvertimeTally
 
 记录每日上下班时间，按公司弹性工时与加班调休规则自动核算加班时长、加班费与调休。
@@ -38,3 +39,6 @@ flutter build apk          # 打包
 
 ## 已知限制
 - 核心适配 Android；Release 包目前使用 debug 签名，上架前需配置正式签名。
+=======
+OvertimeTally
+>>>>>>> c1baf561f998c397e3cca99f5a8ae930992f2ca6
